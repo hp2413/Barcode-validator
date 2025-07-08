@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Barcode Verifier</title>
+    <!-- TailwindCSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- QuaggaJS via CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/quagga/dist/quagga.min.js"></script>
+    <style>
+        /* QuaggaJS video styling */
+        .viewport {
+            position: relative;
+        }
+        .viewport canvas, .viewport video {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .drawingBuffer {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+
+    <main class="bg-white p-6 md:p-8 rounded-xl shadow-lg w-full max-w-lg mx-4">
+        <h1 class="text-2xl md:text-3xl font-bold text-center text-gray-800 mb-6">Barcode Verifier</h1>
+
+        <!-- Camera view will be injected here -->
+        <div id="interactive" class="viewport w-full h-64 mb-6 rounded-lg overflow-hidden hidden"></div>
+
+        <!-- Buttons -->
+        <div class="grid grid-cols-2 gap-4 mb-6">
+            <button id="btn-scan" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors">
+                Scan Reference
+            </button>
+            <button id="btn-verify" class="w-full bg-gray-400 text-white font-bold py-3 px-4 rounded-lg cursor-not-allowed" disabled>
+                Verify
+            </button>
+        </div>
+
+        <!-- Results Display -->
+        <div id="result-container" class="border-2 border-gray-300 p-4 rounded-lg text-center transition-all duration-300">
+            <p class="text-gray-500 text-sm mb-2">Result</p>
+            <p id="barcode-result" class="text-xl font-mono text-gray-800 break-words">
+                Scan a reference barcode to start.
+            </p>
+            <p id="verification-result" class="text-lg font-semibold mt-2 h-7">
+                <!-- Verification status will appear here -->
+            </p>
+        </div>
+
+    </main>
+
+    <script>
+        // --- DOM ELEMENTS ---
+        const scanButton = document.getElementById('btn-scan');
+        const verifyButton = document.getElementById('btn-verify');
+        const interactiveEl = document.getElementById('interactive');
+        const resultContainer = document.getElementById('result-container');
+        const barcodeResultEl = document.getElementById('barcode-result');
+        const verificationResultEl = document.getElementById('verification-result');
+
+        // --- STATE ---
+        let referenceBarcode = null;
+        let currentMode = ''; // 'scan' or 'verify'
+
+        // --- UI HELPER FUNCTIONS ---
+        function resetUI() {
+            // Reset state variable
+            referenceBarcode = null;
+            
+            // Reset text
+            barcodeResultEl.textContent = 'Scan a reference barcode to start.';
+            verificationResultEl.textContent = '';
+            
+            // Reset result container styles
+            resultContainer.classList.remove('border-green-500', 'border-red-500');
+            resultContainer.classList.add('border-gray-300');
+            
+            // Reset verification text styles
+            verificationResultEl.classList.remove('text-green-600', 'text-red-600');
+
+            // Disable verify button
+            verifyButton.disabled = true;
+            verifyButton.classList.add('bg-gray-400', 'cursor-not-allowed');
+            verifyButton.classList.remove('bg-green-600', 'hover:bg-green-700');
+        }
+        
+        function updateUIAfterScan(barcode) {
+            barcodeResultEl.textContent = barcode;
+            // Enable verify button
+            verifyButton.disabled = false;
+            verifyButton.classList.remove('bg-gray-400', 'cursor-not-allowed');
+            verifyButton.classList.add('bg-green-600', 'hover:bg-green-700');
+        }
+
+        function updateUIAfterVerification(isMatch) {
+            if (isMatch) {
+                verificationResultEl.textContent = 'Same';
+                verificationResultEl.classList.add('text-green-600');
+                verificationResultEl.classList.remove('text-red-600');
+                resultContainer.classList.add('border-green-500');
+                resultContainer.classList.remove('border-red-500', 'border-gray-300');
+            } else {
+                verificationResultEl.textContent = 'Different';
+                verificationResultEl.classList.add('text-red-600');
+                verificationResultEl.classList.remove('text-green-600');
+                resultContainer.classList.add('border-red-500');
+                resultContainer.classList.remove('border-green-500', 'border-gray-300');
+            }
+        }
+
+        // --- QUAGGAJS FUNCTIONS ---
+        function startScanner() {
+            Quagga.init({
+                inputStream: {
+                    name: "Live",
+                    type: "LiveStream",
+                    target: interactiveEl,
+                    constraints: {
+                        width: { min: 640 },
+                        height: { min: 480 },
+                        facingMode: "environment", // 'environment' for back camera, 'user' for front
+                        aspectRatio: { min: 1, max: 2 }
+                    },
+                },
+                decoder: {
+                    readers: ["code_128_reader", "ean_reader", "ean_8_reader", "code_39_reader", "code_39_vin_reader", "codabar_reader", "upc_reader", "upc_e_reader", "i2of5_reader"]
+                },
+            }, function (err) {
+                if (err) {
+                    console.error(err);
+                    alert('Error initializing camera. Please grant permission and refresh.');
+                    return;
+                }
+                console.log("Initialization finished. Ready to start.");
+                Quagga.start();
+                interactiveEl.classList.remove('hidden');
+            });
+
+            Quagga.onDetected(handleDetection);
+        }
+
+        function stopScanner() {
+            Quagga.stop();
+            interactiveEl.classList.add('hidden');
+            Quagga.offDetected(handleDetection);
+        }
+
+        function handleDetection(data) {
+            const barcode = data.codeResult.code;
+            stopScanner(); // Stop immediately after first detection
+
+            if (currentMode === 'scan') {
+                referenceBarcode = barcode;
+                updateUIAfterScan(barcode);
+                verificationResultEl.textContent = ''; // Clear old verification result
+            } else if (currentMode === 'verify') {
+                barcodeResultEl.textContent = barcode;
+                const isMatch = (barcode === referenceBarcode);
+                updateUIAfterVerification(isMatch);
+            }
+        }
+        
+        // --- EVENT LISTENERS ---
+        scanButton.addEventListener('click', () => {
+            resetUI();
+            currentMode = 'scan';
+            startScanner();
+        });
+
+        verifyButton.addEventListener('click', () => {
+            if (!referenceBarcode) {
+                alert("Please scan a reference barcode first.");
+                return;
+            }
+            // Clear previous verification result before new scan
+            verificationResultEl.textContent = '';
+            verificationResultEl.classList.remove('text-green-600', 'text-red-600');
+            resultContainer.classList.add('border-gray-300');
+            resultContainer.classList.remove('border-green-500', 'border-red-500');
+
+            currentMode = 'verify';
+            startScanner();
+        });
+    </script>
+</body>
+</html>
