@@ -25,6 +25,43 @@
             top: 0;
             left: 0;
         }
+        
+        /* Scanning guide overlay */
+        .scan-guide {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80%;
+            height: 60px;
+            border: 2px solid #ef4444;
+            border-radius: 8px;
+            background: rgba(239, 68, 68, 0.1);
+            z-index: 10;
+            pointer-events: none;
+        }
+        
+        .scan-guide::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #ef4444;
+            transform: translateY(-50%);
+            animation: scan-line 2s ease-in-out infinite;
+        }
+        
+        @keyframes scan-line {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+        
+        /* Background transition */
+        body {
+            transition: background-color 0.5s ease;
+        }
     </style>
 </head>
 <body class="bg-gray-100 flex items-center justify-center min-h-screen">
@@ -33,7 +70,9 @@
         <h1 class="text-2xl md:text-3xl font-bold text-center text-gray-800 mb-6">Barcode Verifier</h1>
 
         <!-- Camera view will be injected here -->
-        <div id="interactive" class="viewport w-full h-64 mb-6 rounded-lg overflow-hidden hidden"></div>
+        <div id="interactive" class="viewport w-full h-64 mb-6 rounded-lg overflow-hidden hidden relative">
+            <div class="scan-guide"></div>
+        </div>
 
         <!-- Buttons -->
         <div class="grid grid-cols-2 gap-4 mb-6">
@@ -71,6 +110,16 @@
         let referenceBarcode = null;
         let currentMode = ''; // 'scan' or 'verify'
 
+        // --- HELPER FUNCTIONS ---
+        function extractNumbers(text) {
+            // Extract only numbers from the barcode
+            return text.replace(/\D/g, '');
+        }
+
+        function setBackgroundColor(color) {
+            document.body.className = document.body.className.replace(/bg-\w+-\d+/g, '') + ' ' + color;
+        }
+
         // --- UI HELPER FUNCTIONS ---
         function resetUI() {
             // Reset state variable
@@ -87,6 +136,9 @@
             // Reset verification text styles
             verificationResultEl.classList.remove('text-green-600', 'text-red-600');
 
+            // Reset background color
+            setBackgroundColor('bg-gray-100');
+
             // Disable verify button
             verifyButton.disabled = true;
             verifyButton.classList.add('bg-gray-400', 'cursor-not-allowed');
@@ -94,11 +146,15 @@
         }
         
         function updateUIAfterScan(barcode) {
-            barcodeResultEl.textContent = barcode;
-            // Enable verify button
-            verifyButton.disabled = false;
-            verifyButton.classList.remove('bg-gray-400', 'cursor-not-allowed');
-            verifyButton.classList.add('bg-green-600', 'hover:bg-green-700');
+            const numbersOnly = extractNumbers(barcode);
+            barcodeResultEl.textContent = numbersOnly || 'No numbers found';
+            
+            // Enable verify button only if numbers were found
+            if (numbersOnly) {
+                verifyButton.disabled = false;
+                verifyButton.classList.remove('bg-gray-400', 'cursor-not-allowed');
+                verifyButton.classList.add('bg-green-600', 'hover:bg-green-700');
+            }
         }
 
         function updateUIAfterVerification(isMatch) {
@@ -108,12 +164,18 @@
                 verificationResultEl.classList.remove('text-red-600');
                 resultContainer.classList.add('border-green-500');
                 resultContainer.classList.remove('border-red-500', 'border-gray-300');
+                
+                // Set background to green
+                setBackgroundColor('bg-green-200');
             } else {
                 verificationResultEl.textContent = 'Different';
                 verificationResultEl.classList.add('text-red-600');
                 verificationResultEl.classList.remove('text-green-600');
                 resultContainer.classList.add('border-red-500');
                 resultContainer.classList.remove('border-green-500', 'border-gray-300');
+                
+                // Set background to red
+                setBackgroundColor('bg-red-200');
             }
         }
 
@@ -156,15 +218,23 @@
 
         function handleDetection(data) {
             const barcode = data.codeResult.code;
-            stopScanner(); // Stop immediately after first detection
+            const numbersOnly = extractNumbers(barcode);
+            
+            // Only process if we found numbers
+            if (!numbersOnly) {
+                return; // Continue scanning if no numbers found
+            }
+            
+            stopScanner(); // Stop immediately after first valid detection
 
             if (currentMode === 'scan') {
-                referenceBarcode = barcode;
+                referenceBarcode = numbersOnly;
                 updateUIAfterScan(barcode);
                 verificationResultEl.textContent = ''; // Clear old verification result
+                setBackgroundColor('bg-gray-100'); // Reset background
             } else if (currentMode === 'verify') {
-                barcodeResultEl.textContent = barcode;
-                const isMatch = (barcode === referenceBarcode);
+                barcodeResultEl.textContent = numbersOnly;
+                const isMatch = (numbersOnly === referenceBarcode);
                 updateUIAfterVerification(isMatch);
             }
         }
@@ -186,6 +256,7 @@
             verificationResultEl.classList.remove('text-green-600', 'text-red-600');
             resultContainer.classList.add('border-gray-300');
             resultContainer.classList.remove('border-green-500', 'border-red-500');
+            setBackgroundColor('bg-gray-100'); // Reset background
 
             currentMode = 'verify';
             startScanner();
