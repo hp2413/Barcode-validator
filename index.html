@@ -3,11 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Barcode Verifier</title>
+    <title>Multi-Library Barcode Verifier</title>
     <!-- TailwindCSS via CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- QuaggaJS via CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/quagga/dist/quagga.min.js"></script>
+    <!-- HTML5-QRCode -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <!-- ZXing-JS -->
+    <script src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
+    <!-- Quagga2 -->
+    <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2/dist/quagga.min.js"></script>
+    
     <style>
         /* QuaggaJS video styling */
         .viewport {
@@ -62,16 +67,69 @@
         body {
             transition: background-color 0.5s ease;
         }
+
+        /* Hide html5-qrcode default styles */
+        #reader {
+            width: 100% !important;
+            height: 256px !important;
+            border-radius: 8px !important;
+            overflow: hidden !important;
+        }
+
+        #reader video {
+            border-radius: 8px !important;
+        }
+
+        /* ZXing video styling */
+        #zxing-video {
+            width: 100%;
+            height: 256px;
+            object-fit: cover;
+            border-radius: 8px;
+        }
     </style>
 </head>
 <body class="bg-gray-100 flex items-center justify-center min-h-screen">
 
     <main class="bg-white p-6 md:p-8 rounded-xl shadow-lg w-full max-w-lg mx-4">
-        <h1 class="text-2xl md:text-3xl font-bold text-center text-gray-800 mb-6">Barcode Verifier</h1>
+        <h1 class="text-2xl md:text-3xl font-bold text-center text-gray-800 mb-6">Multi-Library Barcode Verifier</h1>
 
-        <!-- Camera view will be injected here -->
-        <div id="interactive" class="viewport w-full h-64 mb-6 rounded-lg overflow-hidden hidden relative">
-            <div class="scan-guide"></div>
+        <!-- Library Selection -->
+        <div class="mb-6">
+            <p class="text-sm font-medium text-gray-700 mb-3">Choose Scanning Library:</p>
+            <div class="grid grid-cols-3 gap-2">
+                <button id="lib-html5qrcode" class="library-toggle bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors">
+                    HTML5-QRCode
+                </button>
+                <button id="lib-zxing" class="library-toggle bg-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors">
+                    ZXing-JS
+                </button>
+                <button id="lib-quagga2" class="library-toggle bg-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors">
+                    Quagga2
+                </button>
+            </div>
+        </div>
+
+        <!-- Camera view containers -->
+        <div class="relative w-full h-64 mb-6 rounded-lg overflow-hidden bg-gray-200">
+            <!-- HTML5-QRCode Scanner -->
+            <div id="reader" class="hidden"></div>
+            
+            <!-- ZXing Scanner -->
+            <div id="zxing-container" class="hidden relative w-full h-full">
+                <video id="zxing-video" autoplay playsinline></video>
+                <div class="scan-guide"></div>
+            </div>
+            
+            <!-- Quagga2 Scanner -->
+            <div id="interactive" class="viewport hidden relative w-full h-full">
+                <div class="scan-guide"></div>
+            </div>
+
+            <!-- Placeholder when no scanner active -->
+            <div id="scanner-placeholder" class="flex items-center justify-center h-full">
+                <p class="text-gray-500 text-center">Select a library and click "Scan Reference" to start</p>
+            </div>
         </div>
 
         <!-- Buttons -->
@@ -95,63 +153,96 @@
             </p>
         </div>
 
+        <!-- Library Info -->
+        <div class="mt-4 text-xs text-gray-600">
+            <p id="library-info">Selected: HTML5-QRCode (1D & 2D barcodes, QR codes)</p>
+        </div>
     </main>
 
     <script>
         // --- DOM ELEMENTS ---
         const scanButton = document.getElementById('btn-scan');
         const verifyButton = document.getElementById('btn-verify');
-        const interactiveEl = document.getElementById('interactive');
         const resultContainer = document.getElementById('result-container');
         const barcodeResultEl = document.getElementById('barcode-result');
         const verificationResultEl = document.getElementById('verification-result');
+        const libraryInfo = document.getElementById('library-info');
+
+        // Library toggle buttons
+        const libHtml5QrCode = document.getElementById('lib-html5qrcode');
+        const libZxing = document.getElementById('lib-zxing');
+        const libQuagga2 = document.getElementById('lib-quagga2');
+
+        // Scanner containers
+        const readerEl = document.getElementById('reader');
+        const zxingContainer = document.getElementById('zxing-container');
+        const zxingVideo = document.getElementById('zxing-video');
+        const interactiveEl = document.getElementById('interactive');
+        const scannerPlaceholder = document.getElementById('scanner-placeholder');
 
         // --- STATE ---
         let referenceBarcode = null;
         let currentMode = ''; // 'scan' or 'verify'
+        let currentLibrary = 'html5qrcode'; // 'html5qrcode', 'zxing', 'quagga2'
+        let activeScanner = null;
+        let zxingCodeReader = null;
 
         // --- HELPER FUNCTIONS ---
-        function formatBarcodeNumber(barcodeData) {
-            // The barcode data is already decoded from the black/white lines
-            // Remove any non-numeric characters and format as numbers
-            const numbersOnly = barcodeData.replace(/\D/g, '');
-            return numbersOnly || barcodeData; // Return original if no numbers found
-        }
-
         function setBackgroundColor(color) {
             document.body.className = document.body.className.replace(/bg-\w+-\d+/g, '') + ' ' + color;
         }
 
+        function updateLibraryInfo() {
+            const info = {
+                'html5qrcode': 'HTML5-QRCode (1D & 2D barcodes, QR codes)',
+                'zxing': 'ZXing-JS (1D & 2D barcodes, comprehensive support)',
+                'quagga2': 'Quagga2 (1D barcodes only - UPC, EAN, Code128, etc.)'
+            };
+            libraryInfo.textContent = `Selected: ${info[currentLibrary]}`;
+        }
+
+        function updateLibraryToggle(selectedLib) {
+            document.querySelectorAll('.library-toggle').forEach(btn => {
+                btn.classList.remove('bg-blue-600', 'text-white');
+                btn.classList.add('bg-gray-300', 'text-gray-700');
+            });
+            
+            document.getElementById(`lib-${selectedLib}`).classList.remove('bg-gray-300', 'text-gray-700');
+            document.getElementById(`lib-${selectedLib}`).classList.add('bg-blue-600', 'text-white');
+            
+            currentLibrary = selectedLib;
+            updateLibraryInfo();
+        }
+
+        function hideAllScanners() {
+            readerEl.classList.add('hidden');
+            zxingContainer.classList.add('hidden');
+            interactiveEl.classList.add('hidden');
+            scannerPlaceholder.classList.add('hidden');
+        }
+
+        function showPlaceholder() {
+            hideAllScanners();
+            scannerPlaceholder.classList.remove('hidden');
+        }
+
         // --- UI HELPER FUNCTIONS ---
         function resetUI() {
-            // Reset state variable
             referenceBarcode = null;
-            
-            // Reset text
             barcodeResultEl.textContent = 'Scan a reference barcode to start.';
             verificationResultEl.textContent = '';
-            
-            // Reset result container styles
             resultContainer.classList.remove('border-green-500', 'border-red-500');
             resultContainer.classList.add('border-gray-300');
-            
-            // Reset verification text styles
             verificationResultEl.classList.remove('text-green-600', 'text-red-600');
-
-            // Reset background color
             setBackgroundColor('bg-gray-100');
-
-            // Disable verify button
+            
             verifyButton.disabled = true;
             verifyButton.classList.add('bg-gray-400', 'cursor-not-allowed');
             verifyButton.classList.remove('bg-green-600', 'hover:bg-green-700');
         }
         
-        function updateUIAfterScan(barcodeData) {
-            const formattedNumber = formatBarcodeNumber(barcodeData);
-            barcodeResultEl.textContent = formattedNumber;
-            
-            // Enable verify button
+        function updateUIAfterScan(decodedData) {
+            barcodeResultEl.textContent = decodedData;
             verifyButton.disabled = false;
             verifyButton.classList.remove('bg-gray-400', 'cursor-not-allowed');
             verifyButton.classList.add('bg-green-600', 'hover:bg-green-700');
@@ -164,8 +255,6 @@
                 verificationResultEl.classList.remove('text-red-600');
                 resultContainer.classList.add('border-green-500');
                 resultContainer.classList.remove('border-red-500', 'border-gray-300');
-                
-                // Set background to green
                 setBackgroundColor('bg-green-200');
             } else {
                 verificationResultEl.textContent = 'Different';
@@ -173,14 +262,65 @@
                 verificationResultEl.classList.remove('text-green-600');
                 resultContainer.classList.add('border-red-500');
                 resultContainer.classList.remove('border-green-500', 'border-gray-300');
-                
-                // Set background to red
                 setBackgroundColor('bg-red-200');
             }
         }
 
-        // --- QUAGGAJS FUNCTIONS ---
-        function startScanner() {
+        // --- SCANNER FUNCTIONS ---
+        function startHtml5QrcodeScanner() {
+            hideAllScanners();
+            readerEl.classList.remove('hidden');
+            
+            const html5QrcodeScanner = new Html5QrcodeScanner(
+                "reader",
+                { 
+                    fps: 10, 
+                    qrbox: { width: 250, height: 100 },
+                    aspectRatio: 1.777778
+                },
+                false
+            );
+            
+            html5QrcodeScanner.render(
+                (decodedText) => {
+                    handleDetection(decodedText);
+                    html5QrcodeScanner.clear();
+                },
+                (error) => {
+                    // Handle scan errors silently
+                }
+            );
+            
+            activeScanner = html5QrcodeScanner;
+        }
+
+        function startZxingScanner() {
+            hideAllScanners();
+            zxingContainer.classList.remove('hidden');
+            
+            zxingCodeReader = new ZXing.BrowserMultiFormatReader();
+            
+            zxingCodeReader.decodeFromVideoDevice(undefined, zxingVideo, (result, error) => {
+                if (result) {
+                    handleDetection(result.text);
+                    stopZxingScanner();
+                }
+            });
+            
+            activeScanner = zxingCodeReader;
+        }
+
+        function stopZxingScanner() {
+            if (zxingCodeReader) {
+                zxingCodeReader.reset();
+                zxingCodeReader = null;
+            }
+        }
+
+        function startQuagga2Scanner() {
+            hideAllScanners();
+            interactiveEl.classList.remove('hidden');
+            
             Quagga.init({
                 inputStream: {
                     name: "Live",
@@ -189,53 +329,111 @@
                     constraints: {
                         width: { min: 640 },
                         height: { min: 480 },
-                        facingMode: "environment", // 'environment' for back camera, 'user' for front
+                        facingMode: "environment",
                         aspectRatio: { min: 1, max: 2 }
                     },
                 },
-                decoder: {
-                    readers: ["code_128_reader", "ean_reader", "ean_8_reader", "code_39_reader", "code_39_vin_reader", "codabar_reader", "upc_reader", "upc_e_reader", "i2of5_reader"]
+                locator: {
+                    patchSize: "medium",
+                    halfSample: true
                 },
+                numOfWorkers: 2,
+                decoder: {
+                    readers: [
+                        "code_128_reader", 
+                        "ean_reader", 
+                        "ean_8_reader", 
+                        "code_39_reader", 
+                        "code_39_vin_reader", 
+                        "codabar_reader", 
+                        "upc_reader", 
+                        "upc_e_reader", 
+                        "i2of5_reader"
+                    ]
+                },
+                locate: true
             }, function (err) {
                 if (err) {
-                    console.error(err);
+                    console.error('Quagga2 initialization error:', err);
                     alert('Error initializing camera. Please grant permission and refresh.');
                     return;
                 }
-                console.log("Initialization finished. Ready to start.");
                 Quagga.start();
-                interactiveEl.classList.remove('hidden');
             });
 
-            Quagga.onDetected(handleDetection);
-        }
-
-        function stopScanner() {
-            Quagga.stop();
-            interactiveEl.classList.add('hidden');
-            Quagga.offDetected(handleDetection);
-        }
-
-        function handleDetection(data) {
-            const barcodeData = data.codeResult.code;
-            console.log('Detected barcode data:', barcodeData);
+            Quagga.onDetected((data) => {
+                handleDetection(data.codeResult.code);
+                stopQuagga2Scanner();
+            });
             
-            stopScanner(); // Stop immediately after detection
+            activeScanner = 'quagga2';
+        }
+
+        function stopQuagga2Scanner() {
+            Quagga.stop();
+            Quagga.offDetected();
+        }
+
+        function stopCurrentScanner() {
+            if (currentLibrary === 'html5qrcode' && activeScanner) {
+                activeScanner.clear();
+            } else if (currentLibrary === 'zxing') {
+                stopZxingScanner();
+            } else if (currentLibrary === 'quagga2') {
+                stopQuagga2Scanner();
+            }
+            
+            activeScanner = null;
+            showPlaceholder();
+        }
+
+        function startScanner() {
+            switch(currentLibrary) {
+                case 'html5qrcode':
+                    startHtml5QrcodeScanner();
+                    break;
+                case 'zxing':
+                    startZxingScanner();
+                    break;
+                case 'quagga2':
+                    startQuagga2Scanner();
+                    break;
+            }
+        }
+
+        function handleDetection(decodedText) {
+            console.log(`Detected with ${currentLibrary}:`, decodedText);
+            
+            stopCurrentScanner();
 
             if (currentMode === 'scan') {
-                referenceBarcode = barcodeData;
-                updateUIAfterScan(barcodeData);
-                verificationResultEl.textContent = ''; // Clear old verification result
-                setBackgroundColor('bg-gray-100'); // Reset background
+                referenceBarcode = decodedText;
+                updateUIAfterScan(decodedText);
+                verificationResultEl.textContent = '';
+                setBackgroundColor('bg-gray-100');
             } else if (currentMode === 'verify') {
-                const formattedNumber = formatBarcodeNumber(barcodeData);
-                barcodeResultEl.textContent = formattedNumber;
-                const isMatch = (barcodeData === referenceBarcode);
+                barcodeResultEl.textContent = decodedText;
+                const isMatch = (decodedText === referenceBarcode);
                 updateUIAfterVerification(isMatch);
             }
         }
-        
+
         // --- EVENT LISTENERS ---
+        libHtml5QrCode.addEventListener('click', () => {
+            stopCurrentScanner();
+            updateLibraryToggle('html5qrcode');
+        });
+
+        libZxing.addEventListener('click', () => {
+            stopCurrentScanner();
+            updateLibraryToggle('zxing');
+        });
+
+        libQuagga2.addEventListener('click', () => {
+            stopCurrentScanner();
+            updateLibraryToggle('quagga2');
+        });
+
         scanButton.addEventListener('click', () => {
             resetUI();
             currentMode = 'scan';
@@ -247,16 +445,20 @@
                 alert("Please scan a reference barcode first.");
                 return;
             }
-            // Clear previous verification result before new scan
+            
             verificationResultEl.textContent = '';
             verificationResultEl.classList.remove('text-green-600', 'text-red-600');
             resultContainer.classList.add('border-gray-300');
             resultContainer.classList.remove('border-green-500', 'border-red-500');
-            setBackgroundColor('bg-gray-100'); // Reset background
+            setBackgroundColor('bg-gray-100');
 
             currentMode = 'verify';
             startScanner();
         });
+
+        // Initialize
+        updateLibraryInfo();
+        showPlaceholder();
     </script>
 </body>
 </html>
