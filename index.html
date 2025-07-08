@@ -111,9 +111,11 @@
         let currentMode = ''; // 'scan' or 'verify'
 
         // --- HELPER FUNCTIONS ---
-        function extractNumbers(text) {
-            // Extract only numbers from the barcode
-            return text.replace(/\D/g, '');
+        function formatBarcodeNumber(barcodeData) {
+            // The barcode data is already decoded from the black/white lines
+            // Remove any non-numeric characters and format as numbers
+            const numbersOnly = barcodeData.replace(/\D/g, '');
+            return numbersOnly || barcodeData; // Return original if no numbers found
         }
 
         function setBackgroundColor(color) {
@@ -145,16 +147,14 @@
             verifyButton.classList.remove('bg-green-600', 'hover:bg-green-700');
         }
         
-        function updateUIAfterScan(barcode) {
-            const numbersOnly = extractNumbers(barcode);
-            barcodeResultEl.textContent = numbersOnly || 'No numbers found';
+        function updateUIAfterScan(barcodeData) {
+            const formattedNumber = formatBarcodeNumber(barcodeData);
+            barcodeResultEl.textContent = formattedNumber;
             
-            // Enable verify button only if numbers were found
-            if (numbersOnly) {
-                verifyButton.disabled = false;
-                verifyButton.classList.remove('bg-gray-400', 'cursor-not-allowed');
-                verifyButton.classList.add('bg-green-600', 'hover:bg-green-700');
-            }
+            // Enable verify button
+            verifyButton.disabled = false;
+            verifyButton.classList.remove('bg-gray-400', 'cursor-not-allowed');
+            verifyButton.classList.add('bg-green-600', 'hover:bg-green-700');
         }
 
         function updateUIAfterVerification(isMatch) {
@@ -217,24 +217,20 @@
         }
 
         function handleDetection(data) {
-            const barcode = data.codeResult.code;
-            const numbersOnly = extractNumbers(barcode);
+            const barcodeData = data.codeResult.code;
+            console.log('Detected barcode data:', barcodeData);
             
-            // Only process if we found numbers
-            if (!numbersOnly) {
-                return; // Continue scanning if no numbers found
-            }
-            
-            stopScanner(); // Stop immediately after first valid detection
+            stopScanner(); // Stop immediately after detection
 
             if (currentMode === 'scan') {
-                referenceBarcode = numbersOnly;
-                updateUIAfterScan(barcode);
+                referenceBarcode = barcodeData;
+                updateUIAfterScan(barcodeData);
                 verificationResultEl.textContent = ''; // Clear old verification result
                 setBackgroundColor('bg-gray-100'); // Reset background
             } else if (currentMode === 'verify') {
-                barcodeResultEl.textContent = numbersOnly;
-                const isMatch = (numbersOnly === referenceBarcode);
+                const formattedNumber = formatBarcodeNumber(barcodeData);
+                barcodeResultEl.textContent = formattedNumber;
+                const isMatch = (barcodeData === referenceBarcode);
                 updateUIAfterVerification(isMatch);
             }
         }
